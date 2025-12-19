@@ -26,4 +26,5 @@ vllm bench serve \
   --dataset-name random \
   --random-input ${INPUT_LEN} \
   --random-output ${OUTPUT_LEN} \
-  --max-concurrency ${CONC}
+  --max-concurrency ${CONC} \
+  --profile
