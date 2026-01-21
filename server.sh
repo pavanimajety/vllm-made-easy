@@ -6,12 +6,14 @@ export NCCL_CUMEM_ENABLE=1
 export VLLM_FLASHINFER_MOE_BACKEND=latency
 export VLLM_USE_FLASHINFER_MOE_FP4=1
 
-vllm serve /tmp/nvidia-DeepSeek-R1-FP4-v2  --kv-cache-dtype fp8 --tensor-parallel-size 1 --pipeline-parallel-size 1 --data-parallel-size 4 --enable-expert-parallel \
-          --swap-space 16 --max-num-seqs 1024 --trust-remote-code --max-model-len 2176 --gpu-memory-utilization 0.9 --max-num-batched-tokens 8192 --no-enable-prefix-caching \
+vllm serve /tmp/nvidia-DeepSeek-R1-FP4-v2 --tensor-parallel-size 1 --pipeline-parallel-size 1 --data-parallel-size 4 --enable-expert-parallel \
+          --swap-space 16 --max-num-seqs 1024 --trust-remote-code --max-model-len 2176 --gpu-memory-utilization 0.9 --max-num-batched-tokens 8192 \
+          --no-enable-prefix-caching \
           --async-scheduling --compilation_config.pass_config.fuse_attn_quant true --compilation_config.pass_config.fuse_allreduce_rms true \
-          --compilation_config.max_cudagraph_capture_size 2048 --attention-config.backend=FLASHINFER_MLA \ 
-          --compilation_config.custom_ops+=+rotary_embedding \
+          --compilation_config.max_cudagraph_capture_size 2048 --attention-config.backend=FLASHINFER_MLA --compilation_config.custom_ops+=+rotary_embedding \
+          --attention-config.use_trtllm_ragged_prefill=true --attention-config.use_prefill_query_quantization=true
 
+	  #  --kv-cache-dtype fp8 --attention-config.use_prefill_query_quantization=true --attention-config.use_trtllm_ragged_prefill=true
 
 #------------ Works ------------------------------------------
 # export VLLM_USE_NCCL_SYMM_MEM=1
