@@ -132,23 +132,20 @@ def benchmark_marlin_moe(
             None,
             w1_scales_marlin,
             w2_scales_marlin,
-            None,
             topk_weights,
             topk_ids,
+            quant_type_id=scalar_types.uint4b8.id,
             global_num_experts=e,
             expert_map=None,
-            global_scale1=None,
-            global_scale2=None,
-            g_idx1=None,
-            g_idx2=None,
             input_global_scale1=None,
             input_global_scale2=None,
+            g_idx1=None,
+            g_idx2=None,
             sort_indices1=None,
             sort_indices2=None,
             w1_zeros=None,
             w2_zeros=None,
             input_dtype=dtype,
-            quant_type_id=scalar_types.uint4b8.id,
             is_k_full=True,
         )
     torch.cuda.synchronize()
@@ -176,23 +173,20 @@ def benchmark_marlin_moe(
             None,
             w1_scales_marlin,
             w2_scales_marlin,
-            None,
             topk_weights,
             topk_ids,
+            quant_type_id=scalar_types.uint4b8.id,
             global_num_experts=e,
             expert_map=None,
-            global_scale1=None,
-            global_scale2=None,
-            g_idx1=None,
-            g_idx2=None,
             input_global_scale1=None,
             input_global_scale2=None,
+            g_idx1=None,
+            g_idx2=None,
             sort_indices1=None,
             sort_indices2=None,
             w1_zeros=None,
             w2_zeros=None,
             input_dtype=dtype,
-            quant_type_id=scalar_types.uint4b8.id,
             is_k_full=True,
         )
     torch.cuda.synchronize()
@@ -423,10 +417,10 @@ def main():
         help="Intermediate size (n)",
     )
     parser.add_argument(
-        "--hidden-size", type=int, default=512, help="Hidden size (k)"
+        "--hidden-size", type=int, default=2048, help="Hidden size (k)"
     )
     parser.add_argument(
-        "--num-experts", type=int, default=384, help="Number of experts (e)"
+        "--num-experts", type=int, default=96, help="Number of experts (e)"
     )
     parser.add_argument("--topk", type=int, default=8, help="Top-K experts")
     parser.add_argument(
