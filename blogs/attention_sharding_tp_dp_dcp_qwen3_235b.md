@@ -46,111 +46,175 @@ Same 8 GPUs, four ways to partition the work. **TP**: one engine, heads split ac
 
 TP, DCP, and DP+EP each rely on a small set of collective operations to move and combine data across ranks. The following uses **4 nodes** (ranks 0–3) and spells out the math, tensor shapes, and data movement for each collective.
 
-**Notation.** \(B\) = batch, \(T\) = sequence length, \(D\) = hidden size; sharding is along one dimension (e.g. head or hidden) by world size (here 4). **Colors:** blue = rank 0, red = rank 1, green = rank 2, yellow = rank 3; **purple** = reduced (e.g. sum) result. **Labels:** “Before” = shard/rank number (0–3). “After” = **(to-from)**, e.g. (1-0) = from rank 0 to rank 1. If the value is reduced we use purple; if it only moves or is copied, we keep the original color.
+**Notation.** \(B\) = batch, \(T\) = sequence length, \(D\) = hidden size; sharding is along one dimension (e.g. head or hidden) by world size (here 4). **Colors:** blue = rank 0, red = rank 1, green = rank 2, yellow = rank 3; **purple** = reduced (e.g. sum) result. **Labels:** “Before” = shard/rank number (0–3). “After” = **(to-from)**, (to←from) = shard at rank *to* from rank *from*. (X←0,1,2,3) = at rank X, value reduced from all ranks 0,1,2,3.
+
+**Shard names (used below):** N0→b, N1→r, N2→g, N3→y. One shard per rank: b, r, g, y. Multiple shards: b0..b3, r0..r3, g0..g3, y0..y3 (subscript = chunk or destination index). Σ = sum over ranks; Σᵢ = chunk i of that sum.
 
 #### All-Reduce (AR)
 
-- **Before:** Each node holds one partial value \(s_i\) (e.g. one slice of the O_proj output). Slices differ across nodes.
+- **Before:** Each node holds one partial value (e.g. one slice of O_proj output). Slices differ across nodes.
 - **After:** Every node holds the same reduced value (sum over ranks).
-- **Shapes:** Before: each node \([B, T, D/4]\). After: every node \([B, T, D]\)—same logical shape, values are the sum across ranks.
-- **Math:** \(y_i = s_0 + s_1 + s_2 + s_3\) for all \(i\). Other reductions (min/max) are possible.
+- **Shapes:** Before: each node \([B, T, D/4]\). After: every node \([B, T, D]\).
 - **Where it shows up:** TP output combine (e.g. after RowParallelLinear O_proj); after MoE down_proj when experts are TP-sharded.
 
-**Before (each node has one partial value; label = rank):**
+```mermaid
+flowchart LR
+    subgraph before["Before"]
+        N0["N0: b"]
+        N1["N1: r"]
+        N2["N2: g"]
+        N3["N3: y"]
+    end
+    before --> op[" sum "]
+    op --> after
+    subgraph after["After"]
+        M0["N0: Σ"]
+        M1["N1: Σ"]
+        M2["N2: Σ"]
+        M3["N3: Σ"]
+    end
+    style N0 fill:#2563eb,color:#fff
+    style N1 fill:#dc2626,color:#fff
+    style N2 fill:#16a34a,color:#fff
+    style N3 fill:#eab308,color:#000
+    style M0 fill:#9333ea,color:#fff
+    style M1 fill:#9333ea,color:#fff
+    style M2 fill:#9333ea,color:#fff
+    style M3 fill:#9333ea,color:#fff
+```
 
-<div style="display: flex; gap: 6px; margin: 6px 0; flex-direction: column;">
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N0</span><div style="width: 20px; height: 20px; background: #2563eb; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: bold;">0</div></div>
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N1</span><div style="width: 20px; height: 20px; background: #dc2626; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: bold;">1</div></div>
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N2</span><div style="width: 20px; height: 20px; background: #16a34a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: bold;">2</div></div>
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N3</span><div style="width: 20px; height: 20px; background: #eab308; display: flex; align-items: center; justify-content: center; color: #000; font-size: 10px; font-weight: bold;">3</div></div>
-</div>
-
-**After (reduced → purple); (to-node from all):**
-
-<div style="display: flex; gap: 6px; margin: 6px 0; flex-direction: column;">
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N0</span><div style="width: 20px; height: 20px; background: #9333ea; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px; font-weight: bold;">(0-0123)</div></div>
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N1</span><div style="width: 20px; height: 20px; background: #9333ea; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px; font-weight: bold;">(1-0123)</div></div>
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N2</span><div style="width: 20px; height: 20px; background: #9333ea; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px; font-weight: bold;">(2-0123)</div></div>
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N3</span><div style="width: 20px; height: 20px; background: #9333ea; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px; font-weight: bold;">(3-0123)</div></div>
-</div>
+| Node | Before (holds) | After (holds) |
+|------|----------------|---------------|
+| N0   | b              | Σ (= b+r+g+y) |
+| N1   | r              | Σ             |
+| N2   | g              | Σ             |
+| N3   | y              | Σ             |
 
 #### AllGather (AG)
 
-- **Before:** Each node holds one shard \(s_i\) (e.g. 1/4 of KV).
-- **After:** Every node holds the full concatenation \([s_0 \| s_1 \| s_2 \| s_3]\). No arithmetic—replication only.
-- **Shapes:** Before: each node \([B, T, D/4]\) (or \([B, H/4, T, d]\) for KV). After: every node \([B, T, D]\) along the sharded dimension.
-- **Math:** \(y_i = [s_0 \| s_1 \| s_2 \| s_3]\) for all \(i\).
+- **Before:** Each node holds one shard (e.g. 1/4 of KV).
+- **After:** Every node holds the full concatenation. No arithmetic—replication only.
+- **Shapes:** Before: each node \([B, T, D/4]\). After: every node \([B, T, D]\).
 - **Where it shows up:** DCP gathering full K,V so each rank can run attention; gathering weights or activations elsewhere.
 
-**Before (each node has one shard; label = rank):**
+```mermaid
+flowchart LR
+    subgraph before["Before"]
+        N0["N0: b"]
+        N1["N1: r"]
+        N2["N2: g"]
+        N3["N3: y"]
+    end
+    before --> op[" concat "]
+    op --> after
+    subgraph after["After"]
+        M0["N0: b, r, g, y"]
+        M1["N1: b, r, g, y"]
+        M2["N2: b, r, g, y"]
+        M3["N3: b, r, g, y"]
+    end
+    style N0 fill:#2563eb,color:#fff
+    style N1 fill:#dc2626,color:#fff
+    style N2 fill:#16a34a,color:#fff
+    style N3 fill:#eab308,color:#000
+    style M0 fill:#2563eb,color:#fff
+    style M1 fill:#dc2626,color:#fff
+    style M2 fill:#16a34a,color:#fff
+    style M3 fill:#eab308,color:#000
+```
 
-<div style="display: flex; gap: 6px; margin: 6px 0; flex-direction: column;">
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N0</span><div style="width: 20px; height: 20px; background: #2563eb; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: bold;">0</div></div>
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N1</span><div style="width: 20px; height: 20px; background: #dc2626; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: bold;">1</div></div>
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N2</span><div style="width: 20px; height: 20px; background: #16a34a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: bold;">2</div></div>
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N3</span><div style="width: 20px; height: 20px; background: #eab308; display: flex; align-items: center; justify-content: center; color: #000; font-size: 10px; font-weight: bold;">3</div></div>
-</div>
-
-**After (values unchanged → same colors); (to-from) per shard:**
-
-<div style="display: flex; gap: 8px; margin: 6px 0; flex-direction: column;">
-  <div style="display: flex; gap: 6px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N0</span><div style="display: inline-flex; gap: 2px;"><div style="width: 22px; height: 18px; background: #2563eb; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(0-0)</div><div style="width: 22px; height: 18px; background: #dc2626; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(0-1)</div><div style="width: 22px; height: 18px; background: #16a34a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(0-2)</div><div style="width: 22px; height: 18px; background: #eab308; display: flex; align-items: center; justify-content: center; color: #000; font-size: 8px;">(0-3)</div></div></div>
-  <div style="display: flex; gap: 6px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N1</span><div style="display: inline-flex; gap: 2px;"><div style="width: 22px; height: 18px; background: #2563eb; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(1-0)</div><div style="width: 22px; height: 18px; background: #dc2626; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(1-1)</div><div style="width: 22px; height: 18px; background: #16a34a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(1-2)</div><div style="width: 22px; height: 18px; background: #eab308; display: flex; align-items: center; justify-content: center; color: #000; font-size: 8px;">(1-3)</div></div></div>
-  <div style="display: flex; gap: 6px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N2</span><div style="display: inline-flex; gap: 2px;"><div style="width: 22px; height: 18px; background: #2563eb; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(2-0)</div><div style="width: 22px; height: 18px; background: #dc2626; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(2-1)</div><div style="width: 22px; height: 18px; background: #16a34a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(2-2)</div><div style="width: 22px; height: 18px; background: #eab308; display: flex; align-items: center; justify-content: center; color: #000; font-size: 8px;">(2-3)</div></div></div>
-  <div style="display: flex; gap: 6px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N3</span><div style="display: inline-flex; gap: 2px;"><div style="width: 22px; height: 18px; background: #2563eb; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(3-0)</div><div style="width: 22px; height: 18px; background: #dc2626; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(3-1)</div><div style="width: 22px; height: 18px; background: #16a34a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(3-2)</div><div style="width: 22px; height: 18px; background: #eab308; display: flex; align-items: center; justify-content: center; color: #000; font-size: 8px;">(3-3)</div></div></div>
-</div>
+| Node | Before (holds) | After (holds) |
+|------|----------------|---------------|
+| N0   | b             | b, r, g, y    |
+| N1   | r             | b, r, g, y    |
+| N2   | g             | b, r, g, y    |
+| N3   | y             | b, r, g, y    |
 
 #### ReduceScatter (RS)
 
-- **Before:** Each node holds a full tensor (e.g. full hidden state).
-- **After:** Node \(i\) holds only the \(i\)-th chunk of the reduced tensor—the sum of that chunk across all ranks.
-- **Shapes:** Before: each node \([B, T, D]\). After: node \(i\) has \([B, T, D/4]\), the \(i\)-th quarter along \(D\), reduced across ranks.
-- **Math:** \(y_i = \text{chunk}_i(s_0) + \text{chunk}_i(s_1) + \text{chunk}_i(s_2) + \text{chunk}_i(s_3)\).
+Each node’s full tensor is 4 chunks: N0→b0,b1,b2,b3; N1→r0,r1,r2,r3; N2→g0,g1,g2,g3; N3→y0,y1,y2,y3. After: node \(i\) holds Σᵢ = chunk i of (b+r+g+y).
+
+- **Before:** Each node holds a full tensor (4 chunks).
+- **After:** Node \(i\) holds only the \(i\)-th chunk of the reduced tensor (sum of that chunk across all ranks).
+- **Shapes:** Before: each node \([B, T, D]\). After: node \(i\) has \([B, T, D/4]\).
 - **Where it shows up:** Distributing a reduction so each rank keeps one chunk (e.g. EP or gradient-style layouts).
 
-**Before (each node has full tensor; label = chunk index 0,1,2,3; same color = same rank):**
+```mermaid
+flowchart LR
+    subgraph before["Before"]
+        N0["N0: b0, b1, b2, b3"]
+        N1["N1: r0, r1, r2, r3"]
+        N2["N2: g0, g1, g2, g3"]
+        N3["N3: y0, y1, y2, y3"]
+    end
+    before --> op[" reduce-scatter "]
+    op --> after
+    subgraph after["After"]
+        M0["N0: Σ₀"]
+        M1["N1: Σ₁"]
+        M2["N2: Σ₂"]
+        M3["N3: Σ₃"]
+    end
+    style N0 fill:#2563eb,color:#fff
+    style N1 fill:#dc2626,color:#fff
+    style N2 fill:#16a34a,color:#fff
+    style N3 fill:#eab308,color:#000
+    style M0 fill:#9333ea,color:#fff
+    style M1 fill:#9333ea,color:#fff
+    style M2 fill:#9333ea,color:#fff
+    style M3 fill:#9333ea,color:#fff
+```
 
-<div style="display: flex; gap: 6px; margin: 6px 0; flex-direction: column;">
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N0</span><div style="display: inline-flex; gap: 2px;"><div style="width: 18px; height: 18px; background: #2563eb; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 9px;">0</div><div style="width: 18px; height: 18px; background: #2563eb; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 9px;">1</div><div style="width: 18px; height: 18px; background: #2563eb; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 9px;">2</div><div style="width: 18px; height: 18px; background: #2563eb; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 9px;">3</div></div></div>
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N1</span><div style="display: inline-flex; gap: 2px;"><div style="width: 18px; height: 18px; background: #dc2626; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 9px;">0</div><div style="width: 18px; height: 18px; background: #dc2626; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 9px;">1</div><div style="width: 18px; height: 18px; background: #dc2626; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 9px;">2</div><div style="width: 18px; height: 18px; background: #dc2626; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 9px;">3</div></div></div>
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N2</span><div style="display: inline-flex; gap: 2px;"><div style="width: 18px; height: 18px; background: #16a34a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 9px;">0</div><div style="width: 18px; height: 18px; background: #16a34a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 9px;">1</div><div style="width: 18px; height: 18px; background: #16a34a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 9px;">2</div><div style="width: 18px; height: 18px; background: #16a34a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 9px;">3</div></div></div>
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N3</span><div style="display: inline-flex; gap: 2px;"><div style="width: 18px; height: 18px; background: #eab308; display: flex; align-items: center; justify-content: center; color: #000; font-size: 9px;">0</div><div style="width: 18px; height: 18px; background: #eab308; display: flex; align-items: center; justify-content: center; color: #000; font-size: 9px;">1</div><div style="width: 18px; height: 18px; background: #eab308; display: flex; align-items: center; justify-content: center; color: #000; font-size: 9px;">2</div><div style="width: 18px; height: 18px; background: #eab308; display: flex; align-items: center; justify-content: center; color: #000; font-size: 9px;">3</div></div></div>
-</div>
+| Node | Before (holds) | After (holds) |
+|------|----------------|---------------|
+| N0   | b0, b1, b2, b3 (N0’s 4 chunks) | Σ₀ only |
+| N1   | r0, r1, r2, r3 (N1’s 4 chunks) | Σ₁ only |
+| N2   | g0, g1, g2, g3 (N2’s 4 chunks) | Σ₂ only |
+| N3   | y0, y1, y2, y3 (N3’s 4 chunks) | Σ₃ only |
 
-**After (reduced → purple); (to-node from all):**
-
-<div style="display: flex; gap: 6px; margin: 6px 0; flex-direction: column;">
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N0</span><div style="width: 20px; height: 20px; background: #9333ea; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(0-0123)</div></div>
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N1</span><div style="width: 20px; height: 20px; background: #9333ea; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(1-0123)</div></div>
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N2</span><div style="width: 20px; height: 20px; background: #9333ea; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(2-0123)</div></div>
-  <div style="display: flex; gap: 8px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N3</span><div style="width: 20px; height: 20px; background: #9333ea; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(3-0123)</div></div>
-</div>
+**After:** Each GPU holds **one chunk** of the sum, not the full sum. Σ₀ = chunk 0 of (b+r+g+y), Σ₁ = chunk 1, etc. So the reduced tensor is **scattered** across ranks (unlike All-Reduce, where every rank gets the full result).
 
 #### All-to-All (A2A)
 
+Same b0..b3, r0..r3, g0..g3, y0..y3 as RS; subscript = destination rank. Before: each node holds its own 4 shards. After: each node holds shard *index* from every rank.
+
 - **Before:** Node \(i\) holds 4 shards (one per destination): shard for rank 0, 1, 2, 3 (rank-major).
-- **After:** Node \(j\) holds the \(j\)-th shard from every rank: \(s_0^{(j)}, s_1^{(j)}, s_2^{(j)}, s_3^{(j)}\) (shard-major). No reduction, only reorder.
-- **Shapes:** Before: node \(i\) holds 4 tensors (e.g. tokens routed to each expert rank). After: node \(j\) holds the \(j\)-th shard from every rank; total elements per rank unchanged, layout reordered.
-- **Math:** Reorder only. \(y_j = [s_0^{(j)}, s_1^{(j)}, s_2^{(j)}, s_3^{(j)}]\).
+- **After:** Node \(j\) holds the \(j\)-th shard from every rank (shard-major). No reduction, only reorder.
+- **Shapes:** Before: node \(i\) holds 4 tensors. After: node \(j\) holds the \(j\)-th shard from every rank; total elements per rank unchanged.
 - **Where it shows up:** MoE expert parallelism—send tokens to the rank that owns the chosen expert; receive back expert outputs.
 
-**Before (rank-major):** Each node holds 4 shards it will *send* (one per destination). Label = destination shard 0–3. Same color per node = that rank’s data.
+```mermaid
+flowchart LR
+    subgraph before["Before"]
+        N0["N0: b0, b1, b2, b3"]
+        N1["N1: r0, r1, r2, r3"]
+        N2["N2: g0, g1, g2, g3"]
+        N3["N3: y0, y1, y2, y3"]
+    end
+    before --> op[" reorder "]
+    op --> after
+    subgraph after["After"]
+        M0["N0: b0, r0, g0, y0"]
+        M1["N1: b1, r1, g1, y1"]
+        M2["N2: b2, r2, g2, y2"]
+        M3["N3: b3, r3, g3, y3"]
+    end
+    style N0 fill:#2563eb,color:#fff
+    style N1 fill:#dc2626,color:#fff
+    style N2 fill:#16a34a,color:#fff
+    style N3 fill:#eab308,color:#000
+    style M0 fill:#2563eb,color:#fff
+    style M1 fill:#dc2626,color:#fff
+    style M2 fill:#16a34a,color:#fff
+    style M3 fill:#eab308,color:#000
+```
 
-<div style="display: flex; gap: 6px; margin: 6px 0; flex-direction: column;">
-  <div style="display: flex; gap: 6px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N0</span><div style="display: inline-flex; gap: 2px;"><div style="width: 20px; height: 20px; background: #2563eb; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: bold;">0</div><div style="width: 20px; height: 20px; background: #2563eb; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: bold;">1</div><div style="width: 20px; height: 20px; background: #2563eb; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: bold;">2</div><div style="width: 20px; height: 20px; background: #2563eb; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: bold;">3</div></div></div>
-  <div style="display: flex; gap: 6px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N1</span><div style="display: inline-flex; gap: 2px;"><div style="width: 20px; height: 20px; background: #dc2626; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: bold;">0</div><div style="width: 20px; height: 20px; background: #dc2626; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: bold;">1</div><div style="width: 20px; height: 20px; background: #dc2626; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: bold;">2</div><div style="width: 20px; height: 20px; background: #dc2626; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: bold;">3</div></div></div>
-  <div style="display: flex; gap: 6px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N2</span><div style="display: inline-flex; gap: 2px;"><div style="width: 20px; height: 20px; background: #16a34a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: bold;">0</div><div style="width: 20px; height: 20px; background: #16a34a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: bold;">1</div><div style="width: 20px; height: 20px; background: #16a34a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: bold;">2</div><div style="width: 20px; height: 20px; background: #16a34a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: bold;">3</div></div></div>
-  <div style="display: flex; gap: 6px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N3</span><div style="display: inline-flex; gap: 2px;"><div style="width: 20px; height: 20px; background: #eab308; display: flex; align-items: center; justify-content: center; color: #000; font-size: 10px; font-weight: bold;">0</div><div style="width: 20px; height: 20px; background: #eab308; display: flex; align-items: center; justify-content: center; color: #000; font-size: 10px; font-weight: bold;">1</div><div style="width: 20px; height: 20px; background: #eab308; display: flex; align-items: center; justify-content: center; color: #000; font-size: 10px; font-weight: bold;">2</div><div style="width: 20px; height: 20px; background: #eab308; display: flex; align-items: center; justify-content: center; color: #000; font-size: 10px; font-weight: bold;">3</div></div></div>
-</div>
-
-**After (reorder only → same colors); (to-from) per shard:**
-
-<div style="display: flex; gap: 6px; margin: 6px 0; flex-direction: column;">
-  <div style="display: flex; gap: 6px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N0</span><div style="display: inline-flex; gap: 2px;"><div style="width: 24px; height: 20px; background: #2563eb; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(0-0)</div><div style="width: 24px; height: 20px; background: #dc2626; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(0-1)</div><div style="width: 24px; height: 20px; background: #16a34a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(0-2)</div><div style="width: 24px; height: 20px; background: #eab308; display: flex; align-items: center; justify-content: center; color: #000; font-size: 8px;">(0-3)</div></div></div>
-  <div style="display: flex; gap: 6px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N1</span><div style="display: inline-flex; gap: 2px;"><div style="width: 24px; height: 20px; background: #2563eb; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(1-0)</div><div style="width: 24px; height: 20px; background: #dc2626; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(1-1)</div><div style="width: 24px; height: 20px; background: #16a34a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(1-2)</div><div style="width: 24px; height: 20px; background: #eab308; display: flex; align-items: center; justify-content: center; color: #000; font-size: 8px;">(1-3)</div></div></div>
-  <div style="display: flex; gap: 6px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N2</span><div style="display: inline-flex; gap: 2px;"><div style="width: 24px; height: 20px; background: #2563eb; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(2-0)</div><div style="width: 24px; height: 20px; background: #dc2626; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(2-1)</div><div style="width: 24px; height: 20px; background: #16a34a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(2-2)</div><div style="width: 24px; height: 20px; background: #eab308; display: flex; align-items: center; justify-content: center; color: #000; font-size: 8px;">(2-3)</div></div></div>
-  <div style="display: flex; gap: 6px; align-items: center;"><span style="font-size: 11px; min-width: 28px;">N3</span><div style="display: inline-flex; gap: 2px;"><div style="width: 24px; height: 20px; background: #2563eb; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(3-0)</div><div style="width: 24px; height: 20px; background: #dc2626; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(3-1)</div><div style="width: 24px; height: 20px; background: #16a34a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 8px;">(3-2)</div><div style="width: 24px; height: 20px; background: #eab308; display: flex; align-items: center; justify-content: center; color: #000; font-size: 8px;">(3-3)</div></div></div>
-</div>
+| Node | Before (holds) | After (holds) |
+|------|----------------|---------------|
+| N0   | b0, b1, b2, b3 (N0’s 4 shards) | b0, r0, g0, y0 |
+| N1   | r0, r1, r2, r3 (N1’s 4 shards) | b1, r1, g1, y1 |
+| N2   | g0, g1, g2, g3 (N2’s 4 shards) | b2, r2, g2, y2 |
+| N3   | y0, y1, y2, y3 (N3’s 4 shards) | b3, r3, g3, y3 |
 
 **Recap (4 nodes).** **AR:** everyone ends up with the same reduced value (sum → purple); per-node shape stays \([B,T,D]\). **AG:** everyone gets the concatenation of all shards; per-node shape goes from \([B,T,D/4]\) to \([B,T,D]\). **RS:** everyone keeps one chunk of the reduced tensor (purple per chunk); \([B,T,D]\) → \([B,T,D/4]\) per node. **A2A:** reorder from rank-major to shard-major; no reduction; total size per rank unchanged.
 
